@@ -1,74 +1,136 @@
 ---
-title: "Project"
+title: "Crimes in North Carolina data analysis"
 author: "Aleksandra Mazur, Mateusz Buta"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
 ```
 
-## Przygotowanie
+Setup
 
-```{r, eval=TRUE}
+```{r, eval=TRUE, results="hide"}
 library(class)
 library(boot)
 library(leaps)
 library(splines)
 library(tree)
 library(randomForest)
+```
 
+# Dataset
+We based on dataset of crimes in North Carolina from 1981 to 1987. A dataframe contains:
+
+* **county** - county identifier
+* **year** - year from 1981 to 1987
+* **crmrte** - crimes committed per person
+* **prbarr** - 'probability' of arrest
+* **prbconv** - 'probability' of conviction
+* **prbpris** - 'probability' of prison sentence
+* **avgsen** - average sentence, days
+* **polpc** - police per capita
+* **density** - hundreds of people per square mile
+* **taxpc** - tax revenue per capita
+* **region** - one of 'other', 'west' or 'central'
+* **smsa** - 'yes' or 'no' if in SMSA
+* **pctmin** - percentage minority in 1980
+* **wcon** - weekly wage in construction
+* **wtuc** - weekly wage in trns, util, commun
+* **wtrd** - weekly wage in whole sales and retail trade
+* **wfir** - weekly wage in finance, insurance and real estate
+* **wser** - weekly wage in service industry
+* **wmfg** - weekly wage in manufacturing
+* **wfed** - weekly wage of federal employees
+* **wsta** - weekly wage of state employees
+* **wloc** - weekly wage of local governments employees
+* **mix** - offence mix: face-to-face/other
+* **pctymle** - percentage of young males
+
+[Dataset source](https://vincentarelbundock.github.io/Rdatasets/doc/Ecdat/Crime.html)
+
+```{r, eval=TRUE}
 crime <- read.csv("/tmp/Crime.csv")
 crime <- subset(crime, select=-c(1))
 summary(crime)
 
 attach(crime)
-#detach(crime.h)
 ```
+
+Firstly, we checked the corelation between predictors.
 
 ```{r, eval=TRUE}
 cor(crime[-c(11, 12, 25)])
 ```
 
-## Simple linear/poly regression
+Some initial observations:
+
+* predictors tend to be correlated
+* salaries are highly correlated with each other and depend on the year
+* the population density is strongly correlated with the crime rate (0.69)
+* the probability of arrest is correlated to the crime rate (-0.36)
+* the probability of conviction is correlated with the number of policemen per person (0.45)
+
+# The probability of being arrested vs minority percentage
+
+As the first part of the project, we wanted to check if the probability of being arrested depends on minority percentage. So we checked some regression models.
+
+### Simple linear regression.
 
 ```{r, eval=TRUE}
-#detach(crime.h)
-#attach(crime)
-lm.fit.simple <- lm(prbarr ~ pctmin, data=crime) # arrest probability vs minority %
+lm.fit.simple <- lm(prbarr ~ pctmin, data=crime)
 summary(lm.fit.simple)
 
 plot(pctmin, prbarr)
 abline(lm.fit.simple)
+```
 
+We can observe curves on the left and right side of the plot, so it is worth to try polynomial regression with even degrees, or something more flexible - for example a spline.
 
-lm.fit.poly2 <- lm(prbarr ~ poly(pctmin, 2), data=crime) # arrest probability vs minority %
+### Simple poly regression - 2 degree.
+
+```{r, eval=TRUE}
+lm.fit.poly2 <- lm(prbarr ~ poly(pctmin, 2), data=crime)
 summary(lm.fit.poly2)
 
 plot(pctmin, prbarr)
 lines(sort(pctmin), fitted(lm.fit.poly2)[order(pctmin)], col='red')
 
 anova(lm.fit.simple, lm.fit.poly2)
+```
 
-lm.fit.poly4 <- lm(prbarr ~ poly(pctmin, 4), data=crime) # arrest probability vs minority %
+###  Simple poly regression - 4 degree.
+
+```{r, eval=TRUE}
+lm.fit.poly4 <- lm(prbarr ~ poly(pctmin, 4), data=crime)
 summary(lm.fit.poly4)
 
 plot(pctmin, prbarr)
 lines(sort(pctmin), fitted(lm.fit.poly4)[order(pctmin)], col='red')
 
 anova(lm.fit.poly2, lm.fit.poly4)
+```
 
-lm.fit.poly6 <- lm(prbarr ~ poly(pctmin, 6), data=crime) # arrest probability vs minority %
+### Simple poly regression - 6 degree.
+
+```{r, eval=TRUE}
+lm.fit.poly6 <- lm(prbarr ~ poly(pctmin, 6), data=crime)
 summary(lm.fit.poly6)
 
 plot(pctmin, prbarr)
 lines(sort(pctmin), fitted(lm.fit.poly6)[order(pctmin)], col='red')
 
 anova(lm.fit.poly4, lm.fit.poly6)
+```
 
-# natural spline
+After analysing summaries and anova output we can see that increasing polynomal degree can improve the quality of regression fit.
 
-lm.fit.ns <- lm(prbarr ~ ns(pctmin, df = 4), data = crime)
+### Natural splines.
+
+```{r, eval=TRUE}
+lm.fit.ns <- lm(prbarr ~ ns(pctmin, df = 6), data = crime)
 summary(lm.fit.ns)
 
 plot(pctmin, prbarr)
@@ -77,6 +139,14 @@ lines(sort(pctmin), fitted(lm.fit.ns)[order(pctmin)], col='red')
 anova(lm.fit.poly6, lm.fit.ns)
 
 ```
+
+Natural splines can also be well-fitted.
+
+The curves at the ends of the chart can lead to interesting conclusions. Where there is a very large or very small minority percentage, the likelihood of being arrested is higher.
+
+### Regression comparison.
+
+Validation error of linear and polynomial regressions to see how well regression fits to actual data.
 
 ```{r, eval=TRUE}
 mse.cv <- function(degree, k) {
@@ -91,17 +161,25 @@ for (i in 1:10) {
 }
 ```
 
-## Regression with all predictors
+We can see, that polynomial regression with even degree gives better results. The lowest mse was achieved for sixth degree polynomial, but at the same time the mse values for that degree varied the most
+
+# Probality of being arrested vs all predictors
+
+The next step was to see which predictor affects the most the arrest probality, so we used the regression with all predictors. 
 
 ```{r, eval=TRUE}
-lm.fit.all <- lm(prbarr ~ ., data=crime) # arrest probability vs all
+lm.fit.all <- lm(prbarr ~ ., data=crime)
 summary(lm.fit.all)
 
 glm.fit.all <- glm(prbarr ~ ., data = crime)
 cv.glm(crime, glm.fit.all, K = 10)$delta[1]
 ```
 
-## Classification (arrest probability low vs high)
+We can see that crmrte, prbconv, polpc, pctmin and mix coefitients are the least likely to be zero. So they are the most important in regressions.
+
+### New factor variable 
+
+Next we decided to analyse arrest probability in more simple way and introduced a new variable `prbarr_high` indicating if probability of being arrested is high or not.
 
 ```{r, eval=TRUE}
 high <- factor(ifelse(prbarr <= 0.3, "No", "Yes"))
@@ -112,6 +190,10 @@ summary(crime.h)
 names(crime.h)
 ```
 
+### Generalized logistic regresion
+
+We started with generalized logistic regresion based on all predictors.
+
 ```{r, eval=TRUE}
 set.seed(1)
 n <- nrow(crime.h)
@@ -120,9 +202,19 @@ test <- -train
 
 fit.logistic <- glm(prbarr_high ~ ., family = binomial, data = crime.h, subset = train)
 summary(fit.logistic)
+
+pred.logistic <- predict(fit.logistic, crime.h[test,], type = "response")
+pred.logistic <- ifelse(pred.logistic > 0.5, "Yes", "No")
+
+conf.logistic <- table(pred.logistic, prbarr_high[test])
+conf.logistic
+
+mean(pred.logistic != prbarr_high[test])
 ```
 
-## Predictors selection
+We can see that most of the coeficients are likely to be 0 and there is not much sense in including them in our model. We used the `regsubsets` function to choose the best subset of predictors.
+
+### Choose the best subset of predictors
 
 ```{r, eval=TRUE}
 fit.sub <- regsubsets(prbarr_high ~ ., data = crime.h, nvmax = 24)
@@ -135,8 +227,11 @@ predictors <- names(which(mask == TRUE))
 predictors
 ```
 
+We included the most promising predictors: crime rate, conviction probability, police per capita, minority percentage, mix and percentage of young males.
+
+### Generalized logistic regresion again
+
 ```{r, eval=TRUE}
-# take the most promising predictors
 fit.logistic <- glm(prbarr_high ~ crmrte + prbconv + polpc + pctmin + mix + pctymle, family = binomial, data = crime.h, subset = train)
 summary(fit.logistic)
 
@@ -151,14 +246,15 @@ conf.logistic
 mean(pred.logistic != prbarr_high[test])
 ```
 
+As we can see the error rate has decreased so we have not dicreased the regression quality by removing some predictors.
+
+In the first part we analysed the arrest probability vs. minority precentage. We decided to do the same with new `prbarr_high` variable.
+
 ```{r, eval=TRUE}
-#regresja logistyczna wielomianowa
 fit.logistic.single <- glm(prbarr_high ~ pctmin, family = binomial, data = crime.h, subset = train)
 summary(fit.logistic.single)
 
 probs.logistic.single <- predict(fit.logistic.single, crime.h[test,], type = "response")
-head(probs.logistic.single)
-
 pred.logistic.single <- ifelse(probs.logistic.single > 0.5, "Yes", "No")
 
 conf.logistic.single <- table(pred.logistic.single, prbarr_high[test])
@@ -172,8 +268,6 @@ fit.logistic.single <- glm(prbarr_high ~ poly(pctmin, 4), family = binomial, dat
 summary(fit.logistic.single)
 
 probs.logistic.single <- predict(fit.logistic.single, crime.h[test,], type = "response")
-head(probs.logistic.single)
-
 pred.logistic.single <- ifelse(probs.logistic.single > 0.5, "Yes", "No")
 
 conf.logistic.single <- table(pred.logistic.single, prbarr_high[test])
@@ -187,8 +281,6 @@ fit.logistic.single <- glm(prbarr_high ~ poly(pctmin, 6), family = binomial, dat
 summary(fit.logistic.single)
 
 probs.logistic.single <- predict(fit.logistic.single, crime.h[test,], type = "response")
-head(probs.logistic.single)
-
 pred.logistic.single <- ifelse(probs.logistic.single > 0.5, "Yes", "No")
 
 conf.logistic.single <- table(pred.logistic.single, prbarr_high[test])
@@ -197,8 +289,13 @@ conf.logistic.single
 mean(pred.logistic.single != prbarr_high[test])
 ```
 
+This time the regression result were very diffent and we could observe that for higher polynomial degrees many coefficients are likely to be zero. Even for linear regression the significant code was lower. 
 
-## KNN
+# Classification of high probality of being arrested
+
+Finally we wanted to build clasificator, that could tell us if the probality of being arrested is high or low. Our first idea was to use knn classificator. 
+
+### Knn classification
 
 ```{r, eval=TRUE}
 set.seed(1)
@@ -226,26 +323,37 @@ table(knn.preds[,3], prbarr_high[test])
 table(knn.preds[,5], prbarr_high[test])
 ```
 
+We've tested several k values and k=1 turned out to be the best. Next we tried bagging algorithm.
+
+### Bagging classification
 
 ```{r, eval=TRUE}
-prbarr_high.tree <- tree(prbarr_high ~ . - prbconv - prbpris, data = crime.h)
-summary(prbarr_high.tree)
-plot(prbarr_high.tree)
-text(prbarr_high.tree, pretty = 0)
-
-
-#bagging
 set.seed(1)
 n <- nrow(crime.h)
 train <- sample(1:n, n / 2)
 test <- -train
 
-high.bag <- randomForest(prbarr_high ~ . - prbconv - prbpris, data = crime.h, subset = train, mtry = 10, importance = TRUE)
+high.bag <- randomForest(prbarr_high ~ ., data = crime.h, subset = train, mtry = 23, importance = TRUE)
 high.bag.pred.train <- predict(high.bag, newdata = crime.h[train,])
-mean((high.bag.pred.train - prbarr_high[train])^2)
+mean(high.bag.pred.train  != prbarr_high[train])
 plot(high.bag, type = "l")
 importance(high.bag)
 varImpPlot(high.bag)
-high.bag.pred <- predict(high.bag, newdata = crime.h, n.trees = 5000)
-mean((high.bag.pred - prbarr_high[test])^2)
+high.bag.pred <- predict(high.bag, newdata = crime.h[test,], n.trees = 5000)
+mean(high.bag.pred != prbarr_high[test])
 ```
+
+Bagging turned out to be better classificator than knn. On the plot we can see that density, conviction probality and crime rate have the most important to increasing accuracy. 
+
+Finally we wanted to see the example of regression tree.
+
+### Regression classification
+
+```{r, eval=TRUE}
+prbarr_high.tree <- tree(prbarr_high ~ ., data = crime.h)
+summary(prbarr_high.tree)
+plot(prbarr_high.tree)
+text(prbarr_high.tree, pretty = 0)
+```
+
+Again we can see the same predictors with the biggest impact on classification results.
