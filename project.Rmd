@@ -1,0 +1,251 @@
+---
+title: "Project"
+author: "Aleksandra Mazur, Mateusz Buta"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+## Przygotowanie
+
+```{r, eval=TRUE}
+library(class)
+library(boot)
+library(leaps)
+library(splines)
+library(tree)
+library(randomForest)
+
+crime <- read.csv("/tmp/Crime.csv")
+crime <- subset(crime, select=-c(1))
+summary(crime)
+
+attach(crime)
+#detach(crime.h)
+```
+
+```{r, eval=TRUE}
+cor(crime[-c(11, 12, 25)])
+```
+
+## Simple linear/poly regression
+
+```{r, eval=TRUE}
+#detach(crime.h)
+#attach(crime)
+lm.fit.simple <- lm(prbarr ~ pctmin, data=crime) # arrest probability vs minority %
+summary(lm.fit.simple)
+
+plot(pctmin, prbarr)
+abline(lm.fit.simple)
+
+
+lm.fit.poly2 <- lm(prbarr ~ poly(pctmin, 2), data=crime) # arrest probability vs minority %
+summary(lm.fit.poly2)
+
+plot(pctmin, prbarr)
+lines(sort(pctmin), fitted(lm.fit.poly2)[order(pctmin)], col='red')
+
+anova(lm.fit.simple, lm.fit.poly2)
+
+lm.fit.poly4 <- lm(prbarr ~ poly(pctmin, 4), data=crime) # arrest probability vs minority %
+summary(lm.fit.poly4)
+
+plot(pctmin, prbarr)
+lines(sort(pctmin), fitted(lm.fit.poly4)[order(pctmin)], col='red')
+
+anova(lm.fit.poly2, lm.fit.poly4)
+
+lm.fit.poly6 <- lm(prbarr ~ poly(pctmin, 6), data=crime) # arrest probability vs minority %
+summary(lm.fit.poly6)
+
+plot(pctmin, prbarr)
+lines(sort(pctmin), fitted(lm.fit.poly6)[order(pctmin)], col='red')
+
+anova(lm.fit.poly4, lm.fit.poly6)
+
+# natural spline
+
+lm.fit.ns <- lm(prbarr ~ ns(pctmin, df = 4), data = crime)
+summary(lm.fit.ns)
+
+plot(pctmin, prbarr)
+lines(sort(pctmin), fitted(lm.fit.ns)[order(pctmin)], col='red')
+
+anova(lm.fit.poly6, lm.fit.ns)
+
+```
+
+```{r, eval=TRUE}
+mse.cv <- function(degree, k) {
+  fit.glm <- glm(prbarr ~ poly(pctmin, degree), data = crime)
+  cv.glm(crime, fit.glm, K = k)$delta[1]
+}
+mse <- replicate(10, sapply(1:6, mse.cv, k = 10))
+
+plot(x = NULL, pch = 20, type = "l", ylab = "Validation error (MSE)", xlim = c(1, 6), ylim = c(0.02, 0.035))
+for (i in 1:10) {
+  points(mse[, i], pch = 20, type = "l", col = i)
+}
+```
+
+## Regression with all predictors
+
+```{r, eval=TRUE}
+lm.fit.all <- lm(prbarr ~ ., data=crime) # arrest probability vs all
+summary(lm.fit.all)
+
+glm.fit.all <- glm(prbarr ~ ., data = crime)
+cv.glm(crime, glm.fit.all, K = 10)$delta[1]
+```
+
+## Classification (arrest probability low vs high)
+
+```{r, eval=TRUE}
+high <- factor(ifelse(prbarr <= 0.3, "No", "Yes"))
+crime.h <- data.frame(crime[-4], prbarr_high=high)
+detach(crime)
+attach(crime.h)
+summary(crime.h)
+names(crime.h)
+```
+
+```{r, eval=TRUE}
+set.seed(1)
+n <- nrow(crime.h)
+train <- sample(1:n, n / 2)
+test <- -train
+
+fit.logistic <- glm(prbarr_high ~ ., family = binomial, data = crime.h, subset = train)
+summary(fit.logistic)
+```
+
+## Predictors selection
+
+```{r, eval=TRUE}
+fit.sub <- regsubsets(prbarr_high ~ ., data = crime.h, nvmax = 24)
+fit.sub.summary <- summary(fit.sub)
+fit.sub.summary
+min.sub <- which.min(fit.sub.summary$bic)
+min.sub
+mask <- fit.sub.summary$which[min.sub, -1]
+predictors <- names(which(mask == TRUE))
+predictors
+```
+
+```{r, eval=TRUE}
+# take the most promising predictors
+fit.logistic <- glm(prbarr_high ~ crmrte + prbconv + polpc + pctmin + mix + pctymle, family = binomial, data = crime.h, subset = train)
+summary(fit.logistic)
+
+probs.logistic <- predict(fit.logistic, crime.h[test,], type = "response")
+head(probs.logistic)
+
+pred.logistic <- ifelse(probs.logistic > 0.5, "Yes", "No")
+
+conf.logistic <- table(pred.logistic, prbarr_high[test])
+conf.logistic
+
+mean(pred.logistic != prbarr_high[test])
+```
+
+```{r, eval=TRUE}
+#regresja logistyczna wielomianowa
+fit.logistic.single <- glm(prbarr_high ~ pctmin, family = binomial, data = crime.h, subset = train)
+summary(fit.logistic.single)
+
+probs.logistic.single <- predict(fit.logistic.single, crime.h[test,], type = "response")
+head(probs.logistic.single)
+
+pred.logistic.single <- ifelse(probs.logistic.single > 0.5, "Yes", "No")
+
+conf.logistic.single <- table(pred.logistic.single, prbarr_high[test])
+conf.logistic.single
+
+mean(pred.logistic.single != prbarr_high[test])
+
+# poly 4
+
+fit.logistic.single <- glm(prbarr_high ~ poly(pctmin, 4), family = binomial, data = crime.h, subset = train)
+summary(fit.logistic.single)
+
+probs.logistic.single <- predict(fit.logistic.single, crime.h[test,], type = "response")
+head(probs.logistic.single)
+
+pred.logistic.single <- ifelse(probs.logistic.single > 0.5, "Yes", "No")
+
+conf.logistic.single <- table(pred.logistic.single, prbarr_high[test])
+conf.logistic.single
+
+mean(pred.logistic.single != prbarr_high[test])
+
+# poly 6
+
+fit.logistic.single <- glm(prbarr_high ~ poly(pctmin, 6), family = binomial, data = crime.h, subset = train)
+summary(fit.logistic.single)
+
+probs.logistic.single <- predict(fit.logistic.single, crime.h[test,], type = "response")
+head(probs.logistic.single)
+
+pred.logistic.single <- ifelse(probs.logistic.single > 0.5, "Yes", "No")
+
+conf.logistic.single <- table(pred.logistic.single, prbarr_high[test])
+conf.logistic.single
+
+mean(pred.logistic.single != prbarr_high[test])
+```
+
+
+## KNN
+
+```{r, eval=TRUE}
+set.seed(1)
+n <- nrow(crime.h)
+train <- sample(1:n, n / 2)
+test <- -train
+train.set <- crime.h[train, c("crmrte", "prbconv", "polpc", "pctmin", "mix", "pctymle")]
+test.set <- crime.h[-train, c("crmrte", "prbconv", "polpc", "pctmin", "mix", "pctymle")]
+
+knn.f <- function(k) {
+  pred.knn <- knn(train.set, test.set, prbarr_high[train], k = k)
+}
+
+knn.preds <- sapply(1:5, knn.f)
+
+mean.f <- function(i) {
+  mean.knn <- mean(knn.preds[,i] != prbarr_high[test])
+}
+
+knn.means <- sapply(1:5, mean.f)
+knn.means
+
+table(knn.preds[,1], prbarr_high[test])
+table(knn.preds[,3], prbarr_high[test])
+table(knn.preds[,5], prbarr_high[test])
+```
+
+
+```{r, eval=TRUE}
+prbarr_high.tree <- tree(prbarr_high ~ . - prbconv - prbpris, data = crime.h)
+summary(prbarr_high.tree)
+plot(prbarr_high.tree)
+text(prbarr_high.tree, pretty = 0)
+
+
+#bagging
+set.seed(1)
+n <- nrow(crime.h)
+train <- sample(1:n, n / 2)
+test <- -train
+
+high.bag <- randomForest(prbarr_high ~ . - prbconv - prbpris, data = crime.h, subset = train, mtry = 10, importance = TRUE)
+high.bag.pred.train <- predict(high.bag, newdata = crime.h[train,])
+mean((high.bag.pred.train - prbarr_high[train])^2)
+plot(high.bag, type = "l")
+importance(high.bag)
+varImpPlot(high.bag)
+high.bag.pred <- predict(high.bag, newdata = crime.h, n.trees = 5000)
+mean((high.bag.pred - prbarr_high[test])^2)
+```
